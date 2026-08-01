@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: audiotool-ml-worker
+Version: 0.1.0
+Summary: Local HTTP adapter for real AudioTool source separation providers
+Requires-Python: <3.15,>=3.10
+Requires-Dist: demucs==4.1.0
+Requires-Dist: fastapi==0.139.0
+Requires-Dist: numpy<3,>=1.26
+Requires-Dist: soundfile==0.14.0
+Requires-Dist: uvicorn[standard]==0.51.0
+Provides-Extra: dev
+Requires-Dist: httpx<1,>=0.28; extra == "dev"
+Requires-Dist: pytest<9,>=8.4; extra == "dev"
+Requires-Dist: ruff<1,>=0.12; extra == "dev"

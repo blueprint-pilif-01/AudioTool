@@ -1,0 +1,38 @@
+{
+  "name": "audiotool",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @audiotool/api --filter @audiotool/web dev",
+    "dev:api": "pnpm --filter @audiotool/api dev",
+    "dev:web": "pnpm --filter @audiotool/web dev",
+    "db:generate": "pnpm --filter @audiotool/database db:generate",
+    "db:migrate": "pnpm --filter @audiotool/database db:migrate",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:e2e": "playwright test",
+    "build": "pnpm -r build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^22.19.0",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.9.2",
+    "globals": "^16.5.0",
+    "prettier": "^3.8.2",
+    "tsx": "^4.23.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0",
+    "vue-eslint-parser": "^10.4.1",
+    "vitest": "^4.1.10"
+  }
+}

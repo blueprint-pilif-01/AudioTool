@@ -1,0 +1,13 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
+  vue-demi: true
+
+minimumReleaseAgeExclude:
+  - bullmq@5.80.7
+  - "@tabler/icons-vue@3.45.0"
+  - "@tabler/icons@3.45.0"

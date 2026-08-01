@@ -1,0 +1,55 @@
+import { resolve } from "node:path";
+
+import { z } from "zod";
+
+const booleanString = z
+  .enum(["true", "false"])
+  .default("false")
+  .transform((value) => value === "true");
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  DATABASE_URL: z.string().url().startsWith("postgresql://"),
+  API_HOST: z.string().default("127.0.0.1"),
+  API_PORT: z.coerce.number().int().positive().default(3000),
+  WEB_ORIGIN: z.string().url().default("http://localhost:5173"),
+  STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
+  STORAGE_LOCAL_ROOT: z.string().default("./storage"),
+  MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(524_288_000),
+  MAX_AUDIO_DURATION_MS: z.coerce.number().int().positive().default(7_200_000),
+  TEMP_FILE_TTL_HOURS: z.coerce.number().positive().default(24),
+  PROJECT_RETENTION_DAYS: z.coerce.number().nonnegative().default(30),
+  CLEANUP_INTERVAL_MINUTES: z.coerce.number().positive().default(60),
+  QUEUE_MODE: z.enum(["inline", "bullmq"]).default("inline"),
+  REDIS_URL: z.string().url().default("redis://localhost:6379"),
+  ML_PROVIDER: z
+    .enum(["mock", "http", "demucs_http", "banquet_http", "sam_audio_http", "audiosep_http"])
+    .default("mock"),
+  ML_WORKER_URL: z.string().url().default("http://localhost:8000"),
+  ML_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
+  GUIDE_TTS_PROVIDER: z.enum(["auto", "groq", "edge", "system"]).default("auto"),
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_TTS_MODEL: z.string().default("canopylabs/orpheus-v1-english"),
+  GROQ_TTS_VOICE: z.enum(["autumn", "diana", "hannah"]).default("hannah"),
+  FFMPEG_PATH: z.string().default("ffmpeg"),
+  FFPROBE_PATH: z.string().default("ffprobe"),
+  TEMP_ROOT: z.string().default("./tmp"),
+  TRUST_PROXY: booleanString,
+});
+
+export type AppConfig = ReturnType<typeof loadConfig>;
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+  const parsed = envSchema.safeParse(env);
+  if (!parsed.success) {
+    const fields = parsed.error.issues.map((issue) => issue.path.join(".")).join(", ");
+    throw new Error(`Invalid environment configuration: ${fields}`);
+  }
+
+  const data = parsed.data;
+  return {
+    ...data,
+    storageLocalRoot: resolve(data.STORAGE_LOCAL_ROOT),
+    tempRoot: resolve(data.TEMP_ROOT),
+  };
+}

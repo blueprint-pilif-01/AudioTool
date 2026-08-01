@@ -1,0 +1,10 @@
+demucs==4.1.0
+fastapi==0.139.0
+numpy<3,>=1.26
+soundfile==0.14.0
+uvicorn[standard]==0.51.0
+
+[dev]
+httpx<1,>=0.28
+pytest<9,>=8.4
+ruff<1,>=0.12
