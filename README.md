@@ -46,6 +46,25 @@ PyTorch/Demucs wheel support.
 
 ## First local start on Windows
 
+On a new PC, double-click `install-audiotool.bat` and accept the Administrator prompt. It installs
+Node.js 22, pnpm, FFmpeg, yt-dlp, PostgreSQL 18, creates the `audio_tool` database, writes `.env`,
+applies migrations, and adds Desktop / Start Menu shortcuts. Choose **Y** when asked if you want
+real Demucs stem separation (Python + PyTorch, several GB); choose **N** to run immediately with
+mock stems.
+
+When setup finishes, start the app with `start-audiotool.bat` or the shortcut. Open
+`http://localhost:5173`.
+
+Unattended complete setup from an elevated PowerShell prompt:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-audiotool.ps1 -Mode Complete -Launch
+```
+
+### Manual setup
+
+If you already have the runtimes installed:
+
 1. Install JavaScript dependencies:
 
    ```powershell

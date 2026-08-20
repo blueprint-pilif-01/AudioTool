@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { runProcess } from "@audiotool/audio-engine";
 
 import type { ApiContext } from "./types.js";
+import { AppError } from "../errors.js";
 
 export function registerHealthRoutes(app: FastifyInstance, context: ApiContext) {
   app.get("/health", () => ({
@@ -12,9 +13,18 @@ export function registerHealthRoutes(app: FastifyInstance, context: ApiContext) 
     timestamp: new Date().toISOString(),
   }));
 
-  app.get("/api/ml/capabilities", async () => ({
-    capabilities: await context.provider.getCapabilities(),
-  }));
+  app.get("/api/ml/capabilities", async () => {
+    try {
+      return { capabilities: await context.provider.getCapabilities() };
+    } catch {
+      throw new AppError(
+        503,
+        "ML_UNAVAILABLE",
+        "Audio analysis is temporarily unavailable. The project library remains accessible.",
+        { provider: context.provider.name },
+      );
+    }
+  });
 
   app.get("/ready", async (_request, reply) => {
     const checks: Record<string, { ok: boolean; detail?: string }> = {

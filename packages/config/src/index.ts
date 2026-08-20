@@ -13,10 +13,16 @@ const envSchema = z.object({
   API_HOST: z.string().default("127.0.0.1"),
   API_PORT: z.coerce.number().int().positive().default(3000),
   WEB_ORIGIN: z.string().url().default("http://localhost:5173"),
+  INTERNAL_API_KEY: z.string().trim().min(32),
   STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
   STORAGE_LOCAL_ROOT: z.string().default("./storage"),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(524_288_000),
   MAX_AUDIO_DURATION_MS: z.coerce.number().int().positive().default(7_200_000),
+  MAX_PROJECTS_PER_USER: z.coerce.number().int().positive().default(100),
+  MAX_STORAGE_BYTES_PER_USER: z.coerce.number().int().positive().default(10_737_418_240),
+  MAX_CONCURRENT_JOBS_PER_USER: z.coerce.number().int().positive().default(1),
+  API_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  API_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   TEMP_FILE_TTL_HOURS: z.coerce.number().positive().default(24),
   PROJECT_RETENTION_DAYS: z.coerce.number().nonnegative().default(30),
   CLEANUP_INTERVAL_MINUTES: z.coerce.number().positive().default(60),
@@ -34,7 +40,19 @@ const envSchema = z.object({
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),
   TEMP_ROOT: z.string().default("./tmp"),
+  VIRUS_SCAN_MODE: z.enum(["disabled", "clamav"]).default("disabled"),
+  CLAMSCAN_PATH: z.string().default("clamscan"),
+  VIRUS_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  YTDLP_PATH: z.string().default("yt-dlp"),
   TRUST_PROXY: booleanString,
+}).superRefine((data, context) => {
+  if (data.NODE_ENV === "production" && data.VIRUS_SCAN_MODE === "disabled") {
+    context.addIssue({
+      code: "custom",
+      path: ["VIRUS_SCAN_MODE"],
+      message: "Production requires VIRUS_SCAN_MODE=clamav.",
+    });
+  }
 });
 
 export type AppConfig = ReturnType<typeof loadConfig>;

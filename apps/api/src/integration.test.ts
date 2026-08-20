@@ -32,6 +32,11 @@ import { buildApp } from "./app.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integration = testDatabaseUrl ? describe : describe.skip;
+const internalApiKey = "audiotool-integration-test-key-012345";
+const internalHeaders = {
+  Authorization: `Bearer ${internalApiKey}`,
+  "X-AudioTool-User-Id": "1",
+};
 
 integration("AudioTool API PostgreSQL workflow", () => {
   let root = "";
@@ -57,6 +62,7 @@ integration("AudioTool API PostgreSQL workflow", () => {
       API_HOST: "127.0.0.1",
       API_PORT: "3000",
       WEB_ORIGIN: "http://localhost:5173",
+      INTERNAL_API_KEY: internalApiKey,
       STORAGE_DRIVER: "local",
       STORAGE_LOCAL_ROOT: resolve(root, "storage"),
       TEMP_ROOT: resolve(root, "tmp"),
@@ -96,14 +102,21 @@ integration("AudioTool API PostgreSQL workflow", () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
 
-  async function json<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${baseUrl}${path}`, {
+  async function request(path: string, init?: RequestInit) {
+    return fetch(`${baseUrl}${path}`, {
       ...init,
       headers: {
-        ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...internalHeaders,
+        ...(init?.body && !(init.body instanceof FormData)
+          ? { "Content-Type": "application/json" }
+          : {}),
         ...init?.headers,
       },
     });
+  }
+
+  async function json<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await request(path, init);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<T>;
   }
@@ -149,7 +162,7 @@ integration("AudioTool API PostgreSQL workflow", () => {
       new Blob([await readFile(fixture)], { type: "audio/wav" }),
       "fixture.wav",
     );
-    const uploadResponse = await fetch(`${baseUrl}/api/projects/${created.project.id}/audio`, {
+    const uploadResponse = await request(`/api/projects/${created.project.id}/audio`, {
       method: "POST",
       body: upload,
     });
@@ -161,7 +174,7 @@ integration("AudioTool API PostgreSQL workflow", () => {
       new Blob([await readFile(fixture)], { type: "audio/wav" }),
       "fixture-copy.wav",
     );
-    const duplicateResponse = await fetch(`${baseUrl}/api/projects/${created.project.id}/audio`, {
+    const duplicateResponse = await request(`/api/projects/${created.project.id}/audio`, {
       method: "POST",
       body: duplicateUpload,
     });
@@ -252,18 +265,15 @@ integration("AudioTool API PostgreSQL workflow", () => {
     const femaleVoice =
       guideSetup.voices.find((voice) => voice.gender === "Female") ?? guideSetup.voices[0];
     expect(femaleVoice).toBeDefined();
-    const voicePreview = await fetch(
-      `${baseUrl}/api/projects/${created.project.id}/guide-voice-preview`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          voiceName: femaleVoice!.name,
-          speechRate: 0,
-          text: "Chorus",
-        }),
-      },
-    );
+    const voicePreview = await request(`/api/projects/${created.project.id}/guide-voice-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        voiceName: femaleVoice!.name,
+        speechRate: 0,
+        text: "Chorus",
+      }),
+    });
     expect(voicePreview.status).toBe(200);
     expect(voicePreview.headers.get("content-type")).toContain("audio/wav");
     expect((await voicePreview.arrayBuffer()).byteLength).toBeGreaterThan(44);
@@ -354,7 +364,7 @@ integration("AudioTool API PostgreSQL workflow", () => {
     expect(exports.exports.some((asset) => asset.originalFilename.endsWith(".mp3"))).toBe(true);
     expect(exports.exports.some((asset) => asset.originalFilename.endsWith(".flac"))).toBe(true);
 
-    const completedCancel = await fetch(`${baseUrl}/api/jobs/${separationStart.job.id}/cancel`, {
+    const completedCancel = await request(`/api/jobs/${separationStart.job.id}/cancel`, {
       method: "POST",
     });
     expect(completedCancel.status).toBe(409);
@@ -372,7 +382,7 @@ integration("AudioTool API PostgreSQL workflow", () => {
       })
       .returning({ id: separationJobs.id });
     expect(queued).toBeDefined();
-    const cancelQueued = await fetch(`${baseUrl}/api/jobs/${queued!.id}/cancel`, {
+    const cancelQueued = await request(`/api/jobs/${queued!.id}/cancel`, {
       method: "POST",
     });
     expect(cancelQueued.status).toBe(202);
@@ -407,11 +417,11 @@ integration("AudioTool API PostgreSQL workflow", () => {
     expect(mixAfterRetry.mix.tracks.some((track) => track.label === "Guide cues")).toBe(true);
     expect(mixAfterRetry.mix.tracks.some((track) => track.label === "Click track")).toBe(true);
 
-    const deleted = await fetch(`${baseUrl}/api/projects/${created.project.id}`, {
+    const deleted = await request(`/api/projects/${created.project.id}`, {
       method: "DELETE",
     });
     expect(deleted.status).toBe(204);
-    const hidden = await fetch(`${baseUrl}/api/projects/${created.project.id}`);
+    const hidden = await request(`/api/projects/${created.project.id}`);
     expect(hidden.status).toBe(404);
   }, 120_000);
 });

@@ -49,6 +49,12 @@ async function collectToolMultipart(
           part.mimetype,
           part.file,
         );
+        try {
+          await context.scanner.scan(stored.absolutePath);
+        } catch (error) {
+          await context.storage.remove(stored.storageKey);
+          throw error;
+        }
         uploads.push({
           storageKey: stored.storageKey,
           absolutePath: stored.absolutePath,

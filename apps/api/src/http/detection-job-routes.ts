@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -31,6 +31,7 @@ async function createOrReuseProcessingJob(
   context: ApiContext,
   input: {
     projectId: string;
+    userId: string;
     mode: SeparationMode;
     task: "detect" | "separate" | "render";
     options: Record<string, unknown>;
@@ -68,6 +69,20 @@ async function createOrReuseProcessingJob(
         "PROJECT_JOB_ALREADY_RUNNING",
         `This project already has an active ${taskName} job.`,
       );
+    }
+    const userActiveJobs = await tx
+      .select({ id: separationJobs.id })
+      .from(separationJobs)
+      .innerJoin(projects, eq(projects.id, separationJobs.projectId))
+      .where(
+        and(
+          eq(projects.userId, input.userId),
+          isNull(projects.deletedAt),
+          inArray(separationJobs.status, activeJobStatuses),
+        ),
+      );
+    if (userActiveJobs.length >= context.config.MAX_CONCURRENT_JOBS_PER_USER) {
+      throw new AppError(429, "CONCURRENT_JOB_QUOTA_EXCEEDED", "Another audio job is already running.");
     }
     if (input.task === "detect" && project.status === "awaiting_confirmation") {
       const [completedDetection] = await tx
@@ -108,6 +123,7 @@ export function registerDetectionAndJobRoutes(app: FastifyInstance, context: Api
     const { projectId } = projectParams.parse(request.params);
     const { job, reused } = await createOrReuseProcessingJob(context, {
       projectId,
+      userId: request.audioToolIdentity!.userId,
       mode: "auto",
       task: "detect",
       options: {},
@@ -199,6 +215,7 @@ export function registerDetectionAndJobRoutes(app: FastifyInstance, context: Api
     const body = createSeparationJobSchema.parse(request.body ?? {});
     const { job, reused } = await createOrReuseProcessingJob(context, {
       projectId,
+      userId: request.audioToolIdentity!.userId,
       mode: body.mode,
       task: "separate",
       options: {
@@ -229,7 +246,12 @@ export function registerDetectionAndJobRoutes(app: FastifyInstance, context: Api
       })
       .from(separationJobs)
       .innerJoin(projects, eq(separationJobs.projectId, projects.id))
-      .where(isNull(projects.deletedAt))
+      .where(
+        and(
+          or(eq(projects.userId, request.audioToolIdentity!.userId), isNull(projects.userId)),
+          isNull(projects.deletedAt),
+        ),
+      )
       .orderBy(desc(separationJobs.queuedAt))
       .limit(limit);
     return {
@@ -278,6 +300,7 @@ export function registerDetectionAndJobRoutes(app: FastifyInstance, context: Api
         : "separate";
     const { job, reused } = await createOrReuseProcessingJob(context, {
       projectId: existing.projectId,
+      userId: request.audioToolIdentity!.userId,
       mode: existing.mode,
       task,
       options: {

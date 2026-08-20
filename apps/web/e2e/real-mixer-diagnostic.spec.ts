@@ -27,7 +27,7 @@ test("real seven-stem mixer remains synchronized through play and seek", async (
       };
     }),
   );
-  expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
   expect(firstPlayback.every((item) => !item.paused && item.readyState >= 2)).toBe(true);
   const firstTimes = firstPlayback.map((item) => item.currentTime);
   const firstSpreadMs = (Math.max(...firstTimes) - Math.min(...firstTimes)) * 1_000;

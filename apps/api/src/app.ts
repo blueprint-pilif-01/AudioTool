@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -32,6 +33,8 @@ import {
 } from "./services/ml-provider.js";
 import { LocalStorageService } from "./services/storage.js";
 import { CleanupService } from "./services/cleanup-service.js";
+import { registerInternalAuthentication } from "./services/internal-auth.js";
+import { createVirusScanner } from "./services/virus-scanner.js";
 
 export interface BuildAppOptions {
   config?: AppConfig;
@@ -92,7 +95,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     config.QUEUE_MODE === "bullmq"
       ? new BullMqJobDispatcher(config.REDIS_URL, processor, app.log)
       : new InlineJobDispatcher(processor);
-  const context: ApiContext = { config, db, storage, provider, eventHub, jobProcessor };
+  const scanner = createVirusScanner(config);
+  const context: ApiContext = { config, db, storage, provider, eventHub, jobProcessor, scanner };
   const cleanup = new CleanupService({
     db,
     storage,
@@ -114,6 +118,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       fileSize: config.MAX_UPLOAD_BYTES,
       fields: 10,
     },
+  });
+  registerInternalAuthentication(app, context);
+  await app.register(rateLimit, {
+    global: true,
+    max: config.API_RATE_LIMIT_MAX,
+    timeWindow: config.API_RATE_LIMIT_WINDOW_MS,
+    keyGenerator: (request) => request.audioToolIdentity?.userId ?? request.ip,
+    allowList: (request) => request.url === "/health" || request.url === "/ready",
   });
   await app.register(swagger, {
     openapi: {

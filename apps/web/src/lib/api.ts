@@ -18,7 +18,9 @@ import type {
   VocalBreakdownPart,
 } from "@audiotool/contracts";
 
-const configuredBase = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
+const configuredBase = import.meta.env.DEV
+  ? ""
+  : (import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "");
 
 interface ErrorEnvelope {
   error?: { code?: string; message?: string };

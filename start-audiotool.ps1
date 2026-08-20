@@ -124,7 +124,7 @@ function Wait-ForHttp {
 }
 
 if (-not (Test-CommandAvailable "node")) {
-  Stop-WithError "Node.js 22 or newer is required."
+  Stop-WithError "Node.js 22 or newer is required. Run install-audiotool.bat once on this PC."
 }
 
 $nodeVersionText = (& node --version).Trim().TrimStart("v")
@@ -133,11 +133,11 @@ if ([version]$nodeVersionText -lt [version]"22.0.0") {
 }
 
 if (-not (Test-CommandAvailable "corepack")) {
-  Stop-WithError "Corepack is missing. Reinstall Node.js 22."
+  Stop-WithError "Corepack is missing. Run install-audiotool.bat, or reinstall Node.js 22."
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot ".env"))) {
-  Stop-WithError ".env is missing. Copy .env.example to .env and configure DATABASE_URL."
+  Stop-WithError ".env is missing. Run install-audiotool.bat, or copy .env.example to .env and set DATABASE_URL."
 }
 
 $useDemucs = $null -ne (Select-String -Path (Join-Path $ProjectRoot ".env") -Pattern "^ML_PROVIDER=demucs_http$" -ErrorAction SilentlyContinue)
@@ -146,7 +146,7 @@ $workerPython = Join-Path $workerRoot ".venv\Scripts\python.exe"
 
 if ($useDemucs) {
   if (-not (Test-Path -LiteralPath $workerPython)) {
-    Stop-WithError "The Demucs environment is missing at apps\ml-worker\.venv."
+    Stop-WithError "The Demucs environment is missing at apps\ml-worker\.venv. Run install-audiotool.bat and choose Complete, or follow apps\ml-worker\README.md."
   }
 
   & $workerPython -c "import fastapi, uvicorn, torch, demucs" 2>$null

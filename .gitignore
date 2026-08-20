@@ -11,6 +11,9 @@ apps/api/tmp/
 apps/ml-worker/.venv/
 apps/ml-worker/ml-cache/
 apps/ml-worker/benchmark-output/
+ml-cache/
+storage/
+tmp/
 *.log
 __pycache__/
 .pytest_cache/

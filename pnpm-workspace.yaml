@@ -2,10 +2,15 @@ packages:
   - "apps/*"
   - "packages/*"
 
+overrides:
+  nanoid: ">=3.3.18"
+  postcss: ">=8.5.23"
+
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
   vue-demi: true
+  youtube-dl-exec: true
 
 minimumReleaseAgeExclude:
   - bullmq@5.80.7

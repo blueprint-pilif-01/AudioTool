@@ -16,6 +16,12 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 const workerUrl = process.env.REAL_ML_WORKER_URL;
 const fixturePath = process.env.REAL_ML_AUDIO_FIXTURE;
 const integration = databaseUrl && workerUrl && fixturePath ? describe : describe.skip;
+const internalApiKey = "real-provider-integration-key-0123456789";
+const internalHeaders = {
+  Authorization: `Bearer ${internalApiKey}`,
+  "X-AudioTool-User-Id": "987654321000000001",
+  "X-AudioTool-User-Role": "admin",
+};
 
 integration("AudioTool real ML provider workflow", () => {
   let root = "";
@@ -41,6 +47,7 @@ integration("AudioTool real ML provider workflow", () => {
       API_HOST: "127.0.0.1",
       API_PORT: "3000",
       WEB_ORIGIN: "http://localhost:5173",
+      INTERNAL_API_KEY: internalApiKey,
       STORAGE_DRIVER: "local",
       STORAGE_LOCAL_ROOT: resolve(root, "storage"),
       TEMP_ROOT: resolve(root, "tmp"),
@@ -86,6 +93,7 @@ integration("AudioTool real ML provider workflow", () => {
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
       headers: {
+        ...internalHeaders,
         ...(init?.body && !(init.body instanceof FormData)
           ? { "Content-Type": "application/json" }
           : {}),
@@ -104,7 +112,7 @@ integration("AudioTool real ML provider workflow", () => {
       if (result.job.status === "failed") {
         throw new Error(result.job.errorMessage ?? "Real-provider job failed");
       }
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
     }
     throw new Error(`Job ${jobId} did not reach ${expected.join(" or ")}.`);
   }
@@ -149,6 +157,7 @@ integration("AudioTool real ML provider workflow", () => {
     const uploadResponse = await fetch(`${baseUrl}/api/projects/${createdProjectId}/audio`, {
       method: "POST",
       body: upload,
+      headers: internalHeaders,
     });
     expect(uploadResponse.status).toBe(201);
 
@@ -161,10 +170,17 @@ integration("AudioTool real ML provider workflow", () => {
       `/api/projects/${createdProjectId}/detections`,
     );
     expect(detected.detections.length).toBeGreaterThanOrEqual(2);
-    expect(detected.detections.every((item) => item.modelName === "htdemucs_6s")).toBe(true);
-    expect(detected.detections.every((item) => item.modelVersion === "demucs-4.1.0")).toBe(true);
+    expect(detected.detections.some((item) => item.modelName === "htdemucs_6s")).toBe(true);
+    expect(
+      detected.detections.every((item) =>
+        item.modelName === "htdemucs_6s"
+          ? item.modelVersion === "demucs-4.1.0"
+          : item.modelName === "residual-texture-split" && item.modelVersion === "1.0.0",
+      ),
+    ).toBe(true);
 
-    detected.detections[0]!.displayLabel = "Verified real stem";
+    const renamedDetection = detected.detections.find((item) => item.modelName === "htdemucs_6s")!;
+    renamedDetection.displayLabel = "Verified real stem";
     const saved = await json<{ detections: InstrumentDetection[] }>(
       `/api/projects/${createdProjectId}/detections`,
       {
@@ -172,7 +188,7 @@ integration("AudioTool real ML provider workflow", () => {
         body: JSON.stringify({ detections: detected.detections }),
       },
     );
-    expect(saved.detections[0]).toMatchObject({
+    expect(saved.detections.find((item) => item.displayLabel === "Verified real stem")).toMatchObject({
       displayLabel: "Verified real stem",
       modelName: "htdemucs_6s",
       modelVersion: "demucs-4.1.0",
@@ -200,17 +216,38 @@ integration("AudioTool real ML provider workflow", () => {
       })
       .from(stems)
       .where(eq(stems.projectId, createdProjectId));
-    expect(persistedStems.length).toBe(saved.detections.filter((item) => item.selected).length + 1);
-    expect(persistedStems.some((stem) => stem.canonicalLabel === "other" && stem.isResidual)).toBe(
-      true,
+    const expectedLabels = new Set(
+      saved.detections.filter((item) => item.selected).map((item) => item.canonicalLabel),
     );
+    const usesTextureSplit = expectedLabels.has("synthesizer") || expectedLabels.has("percussion");
+    if (usesTextureSplit) {
+      expectedLabels.delete("other");
+      expectedLabels.add("synthesizer");
+      expectedLabels.add("percussion");
+    } else {
+      expectedLabels.add("other");
+    }
+    expect(persistedStems.map((stem) => stem.canonicalLabel).sort()).toEqual(
+      [...expectedLabels].sort(),
+    );
+    if (usesTextureSplit) {
+      expect(persistedStems.some((stem) => stem.canonicalLabel === "other")).toBe(false);
+    } else {
+      expect(persistedStems.some((stem) => stem.canonicalLabel === "other" && stem.isResidual)).toBe(
+        true,
+      );
+    }
     expect(
-      persistedStems.every(
-        (stem) =>
-          stem.processingMetadata.modelName === "htdemucs_6s" &&
-          stem.processingMetadata.modelVersion === "demucs-4.1.0" &&
-          stem.processingMetadata.mock === false,
-      ),
+      persistedStems.every((stem) => {
+        const expectedModel = ["synthesizer", "percussion"].includes(stem.canonicalLabel)
+          ? ["residual-texture-split", "1.0.0"]
+          : ["htdemucs_6s", "demucs-4.1.0"];
+        return (
+          stem.processingMetadata.modelName === expectedModel[0] &&
+          stem.processingMetadata.modelVersion === expectedModel[1] &&
+          stem.processingMetadata.mock === false
+        );
+      }),
     ).toBe(true);
 
     const quickStart = await json<{ job: ApiJob }>(

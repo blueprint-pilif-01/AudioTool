@@ -1,8 +1,12 @@
-import { rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { rename, rm, stat } from "node:fs/promises";
+import { resolve } from "node:path";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { youtubeDl } from "youtube-dl-exec";
 
 import { createPlaybackPreview, extractWaveformPeaks, probeAudio } from "@audiotool/audio-engine";
 import { audioAssets, projects } from "@audiotool/database";
@@ -16,10 +20,49 @@ const assetParams = z.object({ assetId: z.string().uuid() });
 const waveformQuery = z.object({
   points: z.coerce.number().int().min(64).max(4_096).default(1_024),
 });
+const youtubeImportSchema = z.object({
+  url: z.string().url(),
+  rightsConfirmed: z.literal(true),
+});
 const waveformCache = new Map<string, Promise<number[]>>();
 const playbackPreviewJobs = new Map<string, Promise<string>>();
 const playbackPreviewWaiters: Array<() => void> = [];
 let activePlaybackPreviews = 0;
+
+function normalizeYoutubeUrl(rawUrl: string) {
+  const url = new URL(rawUrl);
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  let videoId = "";
+  if (host === "youtu.be") {
+    videoId = url.pathname.split("/").filter(Boolean)[0] || "";
+  } else if (host === "youtube.com" || host === "m.youtube.com") {
+    if (url.pathname === "/watch") videoId = url.searchParams.get("v") || "";
+    else if (url.pathname.startsWith("/shorts/") || url.pathname.startsWith("/live/")) {
+      videoId = url.pathname.split("/").filter(Boolean)[1] || "";
+    }
+  }
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+    throw new AppError(400, "INVALID_YOUTUBE_URL", "Use a valid YouTube video URL.");
+  }
+  return { videoId, normalizedUrl: `https://www.youtube.com/watch?v=${videoId}` };
+}
+
+async function assertStorageQuota(request: FastifyRequest, uploadSize: number, context: ApiContext) {
+  const [usage] = await context.db
+    .select({ total: sql<number>`coalesce(sum(${audioAssets.sizeBytes}), 0)` })
+    .from(audioAssets)
+    .innerJoin(projects, eq(projects.id, audioAssets.projectId))
+    .where(
+      and(
+        eq(projects.userId, request.audioToolIdentity!.userId),
+        isNull(projects.deletedAt),
+        isNull(audioAssets.deletedAt),
+      ),
+    );
+  if (Number(usage?.total || 0) + uploadSize > context.config.MAX_STORAGE_BYTES_PER_USER) {
+    throw new AppError(413, "STORAGE_QUOTA_EXCEEDED", "The storage quota has been reached.");
+  }
+}
 
 function rememberWaveform(key: string, waveform: Promise<number[]>) {
   waveformCache.set(key, waveform);
@@ -145,6 +188,8 @@ export function registerAudioRoutes(app: FastifyInstance, context: ApiContext) {
       file.file,
     );
     try {
+      await context.scanner.scan(upload.absolutePath);
+      await assertStorageQuota(request, upload.sizeBytes, context);
       const metadata = await probeAudio(upload.absolutePath, context.config.FFPROBE_PATH);
       if (metadata.durationMs <= 0) {
         throw new AppError(
@@ -212,6 +257,123 @@ export function registerAudioRoutes(app: FastifyInstance, context: ApiContext) {
     } catch (error) {
       await context.storage.remove(upload.storageKey);
       throw error;
+    }
+  });
+
+  app.post("/api/projects/:projectId/youtube", async (request, reply) => {
+    const { projectId } = projectParams.parse(request.params);
+    const body = youtubeImportSchema.parse(request.body);
+    const { videoId, normalizedUrl } = normalizeYoutubeUrl(body.url);
+    const outputPath = resolve(context.config.tempRoot, `${videoId}-${randomUUID()}.mp3`);
+    try {
+      try {
+        await youtubeDl(
+          normalizedUrl,
+          {
+            ignoreConfig: true,
+            noPlaylist: true,
+            format: "bestaudio/best",
+            extractAudio: true,
+            audioFormat: "mp3",
+            audioQuality: 0,
+            ffmpegLocation: context.config.FFMPEG_PATH,
+            output: outputPath,
+            forceOverwrites: true,
+            noProgress: true,
+            noWarnings: true,
+            socketTimeout: 30,
+            retries: 3,
+            maxFilesize: String(context.config.MAX_UPLOAD_BYTES),
+            matchFilter: `duration <= ${Math.floor(context.config.MAX_AUDIO_DURATION_MS / 1000)} & !is_live`,
+          },
+          { windowsHide: true, timeout: 15 * 60_000 },
+        );
+      } catch (cause) {
+        request.log.warn({ err: cause, videoId }, "YouTube audio import failed");
+        throw new AppError(
+          422,
+          "YOUTUBE_IMPORT_FAILED",
+          "Audio could not be downloaded from this YouTube video. It may be unavailable, live, private, or over the configured limits.",
+        );
+      }
+
+      const downloadedStats = await stat(outputPath);
+      if (downloadedStats.size <= 0 || downloadedStats.size > context.config.MAX_UPLOAD_BYTES) {
+        throw new AppError(413, "UPLOAD_TOO_LARGE", "The downloaded audio exceeds the size limit.");
+      }
+      await context.scanner.scan(outputPath);
+      const upload = await context.storage.storeUpload(
+        projectId,
+        `youtube-${videoId}.mp3`,
+        "audio/mpeg",
+        createReadStream(outputPath),
+      );
+      try {
+        await assertStorageQuota(request, upload.sizeBytes, context);
+        const metadata = await probeAudio(upload.absolutePath, context.config.FFPROBE_PATH);
+        if (metadata.durationMs <= 0 || metadata.durationMs > context.config.MAX_AUDIO_DURATION_MS) {
+          throw new AppError(413, "AUDIO_TOO_LONG", "The downloaded audio exceeds the duration limit.");
+        }
+        const [duplicate] = await context.db
+          .select()
+          .from(audioAssets)
+          .where(
+            and(
+              eq(audioAssets.projectId, projectId),
+              eq(audioAssets.checksumSha256, upload.checksumSha256),
+              isNull(audioAssets.deletedAt),
+            ),
+          )
+          .limit(1);
+        if (duplicate) {
+          await context.storage.remove(upload.storageKey);
+          await context.db
+            .update(projects)
+            .set({ sourceAudioId: duplicate.id, status: "draft", updatedAt: new Date() })
+            .where(eq(projects.id, projectId));
+          return reply.send({ asset: serializeAsset(duplicate), deduplicated: true, source: "youtube" });
+        }
+        const [asset] = await context.db.transaction(async (tx) => {
+          const inserted = await tx
+            .insert(audioAssets)
+            .values({
+              projectId,
+              kind: "source",
+              storageProvider: context.storage.providerName,
+              storageKey: upload.storageKey,
+              originalFilename: upload.originalFilename,
+              mimeType: upload.mimeType,
+              extension: upload.extension,
+              sizeBytes: upload.sizeBytes,
+              checksumSha256: upload.checksumSha256,
+              durationMs: metadata.durationMs,
+              sampleRate: metadata.sampleRate,
+              channels: metadata.channels,
+              codec: metadata.codec,
+              bitrate: metadata.bitrate,
+              metadata: {
+                formatName: metadata.formatName,
+                source: "youtube",
+                youtubeVideoId: videoId,
+                sourceUrl: normalizedUrl,
+                rightsConfirmedAt: new Date().toISOString(),
+              },
+            })
+            .returning();
+          if (!inserted[0]) throw new Error("Audio asset insert did not return a row.");
+          await tx
+            .update(projects)
+            .set({ sourceAudioId: inserted[0].id, status: "draft", updatedAt: new Date() })
+            .where(eq(projects.id, projectId));
+          return inserted;
+        });
+        return reply.status(201).send({ asset: serializeAsset(asset!), source: "youtube" });
+      } catch (error) {
+        await context.storage.remove(upload.storageKey);
+        throw error;
+      }
+    } finally {
+      await rm(outputPath, { force: true });
     }
   });
 
