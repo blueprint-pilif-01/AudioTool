@@ -140,6 +140,62 @@ function Get-DotEnvMap {
   return $map
 }
 
+function Write-DefaultEnvFile {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$DatabaseUrl,
+    [Parameter(Mandatory = $true)][string]$ApiKey,
+    [Parameter(Mandatory = $true)][string]$MlProvider,
+    [string]$YtDlpPath = "yt-dlp"
+  )
+  $content = @"
+DATABASE_URL=$DatabaseUrl
+API_HOST=127.0.0.1
+API_PORT=3000
+WEB_ORIGIN=http://localhost:5173
+VITE_API_URL=
+INTERNAL_API_KEY=$ApiKey
+DEV_INTERNAL_USER_ID=1
+STORAGE_DRIVER=local
+STORAGE_LOCAL_ROOT=./storage
+MAX_UPLOAD_BYTES=524288000
+MAX_AUDIO_DURATION_MS=7200000
+MAX_PROJECTS_PER_USER=100
+MAX_STORAGE_BYTES_PER_USER=10737418240
+MAX_CONCURRENT_JOBS_PER_USER=1
+API_RATE_LIMIT_MAX=120
+API_RATE_LIMIT_WINDOW_MS=60000
+TEMP_FILE_TTL_HOURS=24
+PROJECT_RETENTION_DAYS=30
+CLEANUP_INTERVAL_MINUTES=60
+QUEUE_MODE=inline
+REDIS_URL=redis://localhost:6379
+ML_PROVIDER=$MlProvider
+ML_WORKER_URL=http://localhost:8000
+ML_REQUEST_TIMEOUT_MS=1800000
+GUIDE_TTS_PROVIDER=auto
+GROQ_API_KEY=
+GROQ_TTS_MODEL=canopylabs/orpheus-v1-english
+GROQ_TTS_VOICE=hannah
+AUDIOTOOL_ML_MODEL=htdemucs_6s
+AUDIOTOOL_ML_VOCAL_MODEL=htdemucs_ft
+AUDIOTOOL_ML_CACHE_ROOT=./ml-cache
+AUDIOTOOL_ML_MAX_UPLOAD_BYTES=524288000
+AUDIOTOOL_ML_TIMEOUT_SECONDS=1800
+AUDIOTOOL_ML_CONCURRENCY=1
+AUDIOTOOL_ML_SHIFTS=0
+FFMPEG_PATH=ffmpeg
+FFPROBE_PATH=ffprobe
+TEMP_ROOT=./tmp
+VIRUS_SCAN_MODE=disabled
+CLAMSCAN_PATH=clamscan
+VIRUS_SCAN_TIMEOUT_MS=120000
+YTDLP_PATH=$YtDlpPath
+"@
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $content.TrimStart() + "`n", $utf8)
+}
+
 function Set-DotEnvValues {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
@@ -459,35 +515,34 @@ try {
   }
 
   Write-Step "Writing .env"
-  $example = Join-Path $ProjectRoot ".env.example"
-  if (-not (Test-Path -LiteralPath $envFile)) {
-    if (-not (Test-Path -LiteralPath $example)) { Stop-Installer ".env.example is missing." }
-    Copy-Item -LiteralPath $example -Destination $envFile
-  }
-  $envValues = Get-DotEnvMap -Path $envFile
-  $apiKey = $envValues["INTERNAL_API_KEY"]
-  if (-not $apiKey -or $apiKey.Length -lt 32 -or $apiKey -eq "replace-with-at-least-32-random-characters") {
-    $apiKey = New-RandomToken -Bytes 48
-  }
-  $databaseUrl = "postgresql://postgres:$([uri]::EscapeDataString($finalPassword))@127.0.0.1:5432/audio_tool"
-  $updates = @{
-    DATABASE_URL = $databaseUrl
-    INTERNAL_API_KEY = $apiKey
-    DEV_INTERNAL_USER_ID = "1"
-    VITE_API_URL = ""
-    QUEUE_MODE = "inline"
-    STORAGE_DRIVER = "local"
-    VIRUS_SCAN_MODE = "disabled"
-  }
-  if ($Mode -eq "Complete") { $updates["ML_PROVIDER"] = "demucs_http" }
-  else { $updates["ML_PROVIDER"] = "mock" }
+  $mlProvider = "mock"
+  if ($Mode -eq "Complete") { $mlProvider = "demucs_http" }
   $ytDlp = Find-CommandPath "yt-dlp"
-  if ($ytDlp) { $updates["YTDLP_PATH"] = $ytDlp.Replace("\", "/") }
-  Set-DotEnvValues -Path $envFile -Values $updates
+  if (-not $ytDlp) { $ytDlp = "yt-dlp" }
+  else { $ytDlp = $ytDlp.Replace("\", "/") }
+  $databaseUrl = "postgresql://postgres:$([uri]::EscapeDataString($finalPassword))@127.0.0.1:5432/audio_tool"
+  if (-not (Test-Path -LiteralPath $envFile)) {
+    $apiKey = New-RandomToken -Bytes 48
+    Write-DefaultEnvFile -Path $envFile -DatabaseUrl $databaseUrl -ApiKey $apiKey -MlProvider $mlProvider -YtDlpPath $ytDlp
+    Write-Ok ".env was created with a local database URL and a new API key."
+  } else {
+    $envValues = Get-DotEnvMap -Path $envFile
+    $apiKey = $envValues["INTERNAL_API_KEY"]
+    if (-not $apiKey -or $apiKey.Length -lt 32 -or $apiKey -eq "replace-with-at-least-32-random-characters") {
+      $apiKey = New-RandomToken -Bytes 48
+    }
+    Set-DotEnvValues -Path $envFile -Values @{
+      DATABASE_URL = $databaseUrl
+      INTERNAL_API_KEY = $apiKey
+      DEV_INTERNAL_USER_ID = "1"
+      ML_PROVIDER = $mlProvider
+      YTDLP_PATH = $ytDlp
+    }
+    Write-Ok "Updated the existing .env with database and API credentials."
+  }
   New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "storage") | Out-Null
   New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "tmp") | Out-Null
   New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "ml-cache") | Out-Null
-  Write-Ok ".env is ready. The database password lives only in that file."
 
   Write-Step "Allowing Windows Defender to skip this project folder"
   try {
